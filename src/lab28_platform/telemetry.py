@@ -41,6 +41,7 @@ _TRACEPARENT_HEADER = "traceparent"
 _TRACESTATE_HEADER = "tracestate"
 
 _configured = False
+_service_tracers: dict[str, trace.Tracer] = {}
 
 
 def configure_telemetry(settings: TelemetrySettings | None = None) -> None:
@@ -109,6 +110,47 @@ def _configure_metrics(resource: Any, settings: TelemetrySettings) -> None:
 def get_tracer() -> trace.Tracer:
     configure_telemetry()
     return trace.get_tracer(SERVICE_TRACER_NAME)
+
+
+def get_service_tracer(service_name: str) -> trace.Tracer:
+    """Return a tracer with a distinct service resource for a remote boundary.
+
+    Spark Connect executes the plan in another process even though its Python
+    client lives in the Airflow task. Giving that client span its own resource
+    keeps the process boundary visible in the distributed trace.
+    """
+    cached = _service_tracers.get(service_name)
+    if cached is not None:
+        return cached
+
+    active = TelemetrySettings.from_env(service_name)
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
+
+    provider = TracerProvider(
+        resource=Resource.create(
+            {
+                "service.name": service_name,
+                "service.namespace": "lab28",
+                "deployment.environment": "lab",
+            }
+        )
+    )
+    if active.enabled:
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+        provider.add_span_processor(
+            BatchSpanProcessor(OTLPSpanExporter(endpoint=active.otlp_endpoint, insecure=True))
+        )
+    if active.console_export:
+        from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+
+        provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+
+    tracer = provider.get_tracer(SERVICE_TRACER_NAME)
+    _service_tracers[service_name] = tracer
+    return tracer
 
 
 def trace_id_of(span: Span) -> str:
@@ -190,9 +232,10 @@ def span(
     kind: SpanKind = SpanKind.INTERNAL,
     parent: Context | None = None,
     attributes: dict[str, Any] | None = None,
+    service_name: str | None = None,
 ) -> Iterable[Span]:
     """Start a span, record exceptions and always set an explicit status."""
-    tracer = get_tracer()
+    tracer = get_service_tracer(service_name) if service_name else get_tracer()
     with tracer.start_as_current_span(
         name, context=parent, kind=kind, attributes=attributes or {}
     ) as active:

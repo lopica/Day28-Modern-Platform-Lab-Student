@@ -198,6 +198,7 @@ def merge_events(
         SPAN_SPARK_DELTA_MERGE,
         kind=SpanKind.CLIENT,
         parent=parent,
+        service_name="lab28-spark",
         attributes={
             "lab28.batch.events": len(batch),
             "lab28.batch.feedback_rows": written["feedback"],

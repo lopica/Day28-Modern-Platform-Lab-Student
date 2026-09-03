@@ -71,13 +71,12 @@ static_resources:
                     socket_address: {address: api, port_value: 8000}
       health_checks:
         - timeout: 2s
-          interval: 2s
+          interval: 0.2s
           unhealthy_threshold: 1
           healthy_threshold: 1
-          # Liveness decides whether Envoy can route. Application readiness is
-          # deliberately proxied so students can see the exact degraded
-          # dependency report instead of an opaque "no healthy upstream".
-          http_health_check: {path: /health}
+          # Readiness decides whether Envoy can route. A live process whose
+          # mandatory retrieval dependency is down must leave rotation.
+          http_health_check: {path: /ready}
       common_lb_config:
         healthy_panic_threshold: {value: 0}
     - name: otel_collector
